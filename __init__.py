@@ -1,0 +1,16 @@
+"""Chatwork platform plugin for Hermes Agent.
+
+Kept import-light: Hermes imports the adapter (and httpx) only when the
+gateway, cron or `hermes send` first asks for the Chatwork platform.
+"""
+
+
+def register(ctx) -> None:
+    try:
+        from .adapter import register as _register
+    except ImportError:  # flat import (pytest rootdir)
+        from adapter import register as _register  # type: ignore
+    _register(ctx)
+
+
+__all__ = ["register"]

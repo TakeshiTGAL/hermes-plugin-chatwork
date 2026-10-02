@@ -1,0 +1,55 @@
+manifest_version: 2
+name: jp-chatwork
+label: Chatwork
+kind: platform
+version: 0.1.0
+requires_hermes: ">=0.21.4"
+description: >
+  Unofficial Chatwork gateway adapter for Hermes Agent, not affiliated with
+  or endorsed by the company that runs Chatwork. Put Hermes in a Chatwork
+  room and ask it things with [To:] or a reply, like a colleague. Polls the
+  Chatwork API v2 (no public URL or webhook needed), stays inside the
+  300-calls-per-5-minutes limit, answers as a Chatwork reply, and never
+  answers a message twice across restarts. Uses httpx, already a Hermes
+  dependency.
+author: TakeshiTGAL
+license: MIT
+homepage: https://github.com/TakeshiTGAL/hermes-plugin-chatwork
+tags: [gateway, chatwork, japan]
+requires_env:
+  - name: CHATWORK_API_TOKEN
+    description: "API token of the Chatwork account Hermes speaks as (a dedicated bot account is recommended)"
+    prompt: "Chatwork API token"
+    url: "https://www.chatwork.com/service/packages/chatwork/subpackages/api/token.php"
+    secret: true     # masked when `hermes plugins install` asks for it
+    password: true   # masked in `hermes config`
+  - name: CHATWORK_ROOMS
+    description: "Room ids Hermes works in, comma-separated (the number after 'rid' in the room URL)"
+    prompt: "Room ids (comma-separated)"
+    secret: false
+    password: false
+optional_env:
+  - name: CHATWORK_REQUIRE_MENTION
+    description: "true (default): in group rooms answer only [To:bot] or a reply to the bot; false: answer every message"
+    prompt: "Answer only when addressed? (true/false)"
+    password: false
+  - name: CHATWORK_FREE_RESPONSE_ROOMS
+    description: "Room ids where every message is answered without [To:]"
+    prompt: "Rooms that need no [To:] (comma-separated, or empty)"
+    password: false
+  - name: CHATWORK_POLL_INTERVAL
+    description: "Seconds between checks for new messages (default 5, minimum 2)"
+    prompt: "Poll interval seconds"
+    password: false
+  - name: CHATWORK_ALLOWED_USERS
+    description: "Only these Chatwork account ids may use the bot (default: everyone in the listed rooms). While unset, only the token's own account can use Hermes commands other than /help, /whoami, /new and /reset, or answer approval prompts"
+    prompt: "Allowed account ids (comma-separated, or empty)"
+    password: false
+  - name: CHATWORK_HOME_CHANNEL
+    description: "Room id for cron and `hermes send` deliveries and for Hermes' own notices. No default: unset means no Chatwork home"
+    prompt: "Home room id (or empty)"
+    password: false
+  - name: CHATWORK_NOTICE_DELIVERY
+    description: "private (default): Hermes' notices meant for one person, such as the one-time 'No home channel is set' hint, go to the gateway log instead of a group room. public: post them in the room"
+    prompt: "Notice delivery in group rooms (private/public)"
+    password: false
