@@ -5,9 +5,9 @@ kind: platform
 version: 0.1.0
 requires_hermes: ">=0.21.4"
 description: >
-  Unofficial Chatwork gateway adapter for Hermes Agent, not affiliated with
-  or endorsed by the company that runs Chatwork. Put Hermes in a Chatwork
-  room and ask it things with [To:] or a reply, like a colleague. Polls the
+  Talk to Hermes from Chatwork rooms, built on the Chatwork API. Put Hermes
+  in a Chatwork room and ask it things with [To:] or a reply, like a
+  colleague. Polls the
   Chatwork API v2 (no public URL or webhook needed), stays inside the
   300-calls-per-5-minutes limit, answers as a Chatwork reply, and never
   answers a message twice across restarts. Uses httpx, already a Hermes

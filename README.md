@@ -1,6 +1,6 @@
-# Chatwork for Hermes Agent
+# jp-chatwork: talk to Hermes Agent from Chatwork rooms
 
-Put [Hermes Agent](https://github.com/NousResearch/hermes-agent) in a Chatwork room and ask it things the way you would ask a colleague: press **To** (or **Reply**) on its name, type the question, and the answer comes back as a Chatwork reply, with the usual notification.
+Built on the [Chatwork API](https://developer.chatwork.com/). Put [Hermes Agent](https://github.com/NousResearch/hermes-agent) in a Chatwork room and ask it things the way you would ask a colleague: press **To** (or **Reply**) on its name, type the question, and the answer comes back as a Chatwork reply, with the usual notification.
 
 ```
 山田:   [To] AIアシスタントさん
@@ -18,7 +18,7 @@ AI:     [RE] 山田さん
 - **Never answers twice.** Its read position is saved, so a restart or crash does not produce duplicate answers.
 - **Commands and approvals stay with you by default.** Anyone in a listed room can ask, but only the token's own account can use Hermes commands (beyond `/help`, `/whoami`, `/new`, `/reset`) or answer Hermes' approval prompts for risky actions until you choose who else may (see [Who can use it](#who-can-use-it-and-what-it-can-do)).
 
-This is an unofficial, community plugin. It is not affiliated with or endorsed by the company that runs Chatwork, or by Nous Research.
+jp-chatwork is built on the Chatwork API. TakeshiTGAL develops and maintains it and is the party responsible for it; the MIT license sets out the warranty and liability terms. Questions and bug reports: [GitHub Issues](https://github.com/TakeshiTGAL/hermes-plugin-chatwork/issues).
 
 日本語の説明は[下にあります](#日本語)。
 
@@ -194,7 +194,7 @@ License: MIT.
 
 ## 日本語
 
-Chatwork のルームに AI 担当（Hermes Agent）を置くためのプラグインです。同僚に頼むときと同じように、**To** か**返信**で話しかけると、Chatwork の返信として答えが届きます。
+Chatwork API を活用して、Chatwork のルームに AI 担当（Hermes Agent）を置けるようにしたプラグインです。同僚に頼むときと同じように、**To** か**返信**で話しかけると、Chatwork の返信として答えが届きます。
 
 ### できること
 
@@ -205,7 +205,7 @@ Chatwork のルームに AI 担当（Hermes Agent）を置くためのプラグ�
 - 再起動しても、同じメッセージに二度答えることはありません。
 - Hermes のコマンドと危ない操作の承認は、最初はトークンのアカウント本人しか使えません。誰に任せるかは自分で決めます（「安全のために」）。
 
-非公式のプラグインです。Chatwork を運営する会社とも、Nous Research とも関係はありません。
+開発と保守は TakeshiTGAL が行い、このプラグインの責任の所在は TakeshiTGAL にあります（保証と責任の範囲は MIT ライセンスのとおりです）。質問や不具合の連絡は [GitHub Issues](https://github.com/TakeshiTGAL/hermes-plugin-chatwork/issues) へどうぞ。
 
 ### 始める前に
 

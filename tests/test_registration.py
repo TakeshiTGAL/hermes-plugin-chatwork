@@ -66,7 +66,8 @@ def test_manifest_matches_registration():
     assert ctx.middleware == []
     assert _env_names(manifest["requires_env"]) == ctx.platforms[0]["required_env"]
     assert manifest["manifest_version"] == 2 and manifest["requires_hermes"] == ">=0.21.4"
-    assert "Unofficial" in manifest["description"] and "not affiliated" in manifest["description"]
+    assert "built on the Chatwork API" in manifest["description"]
+    assert "Unofficial" not in manifest["description"] and "affiliated" not in manifest["description"]
     assert not (ROOT / "catalog-entry.yaml").exists()  # the catalog entry lives in the Hermes repo
 
 
