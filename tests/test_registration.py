@@ -32,17 +32,69 @@ class RecordingCtx:
 
 def _registered():
     import importlib.util
+    import sys
+
     spec = importlib.util.spec_from_file_location("chatwork_plugin", ROOT / "__init__.py",
                                                   submodule_search_locations=[str(ROOT)])
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    ctx = RecordingCtx()
-    mod.register(ctx)
-    return ctx
+    # Relative imports need the package registered before exec (Hermes does this too).
+    sys.modules["chatwork_plugin"] = mod
+    try:
+        spec.loader.exec_module(mod)
+        ctx = RecordingCtx()
+        mod.register(ctx)
+        return ctx
+    finally:
+        sys.modules.pop("chatwork_plugin", None)
+        for key in list(sys.modules):
+            if key.startswith("chatwork_plugin."):
+                sys.modules.pop(key, None)
 
 
 def _env_names(entries):
     return [e if isinstance(e, str) else e["name"] for e in entries or []]
+
+
+def test_init_package_import_does_not_fall_back_to_flat_on_relative_error(monkeypatch):
+    """When __package__ is set, a broken relative adapter import must not retry top-level adapter."""
+    import builtins
+    import importlib.util
+    import sys
+    import types
+
+    real_import = builtins.__import__
+    probed = {"flat_adapter": 0}
+
+    def gated_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level >= 1 and (name == "adapter" or (not name and fromlist and "adapter" in fromlist)):
+            raise ImportError("broken sibling adapter")
+        if name == "adapter" and level == 0:
+            probed["flat_adapter"] += 1
+            raise AssertionError("must not fall back to flat adapter import")
+        return real_import(name, globals, locals, fromlist, level)
+
+    spec = importlib.util.spec_from_file_location(
+        "chatwork_plugin_gate", ROOT / "__init__.py",
+        submodule_search_locations=[str(ROOT)],
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["chatwork_plugin_gate"] = mod
+    monkeypatch.setattr(builtins, "__import__", gated_import)
+    try:
+        try:
+            spec.loader.exec_module(mod)
+            # register() is what does the relative import
+            mod.register(RecordingCtx())
+            ok = True
+        except ImportError:
+            ok = False
+        assert ok is False
+        assert probed["flat_adapter"] == 0
+    finally:
+        sys.modules.pop("chatwork_plugin_gate", None)
+        for key in list(sys.modules):
+            if key.startswith("chatwork_plugin_gate."):
+                sys.modules.pop(key, None)
 
 
 def test_registers_one_chatwork_platform_and_nothing_else():

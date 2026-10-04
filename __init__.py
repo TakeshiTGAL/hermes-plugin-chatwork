@@ -6,9 +6,9 @@ gateway, cron or `hermes send` first asks for the Chatwork platform.
 
 
 def register(ctx) -> None:
-    try:
+    if __package__:
         from .adapter import register as _register
-    except ImportError:  # flat import (pytest rootdir)
+    else:  # flat import only when loaded as a top-level module (pytest rootdir)
         from adapter import register as _register  # type: ignore
     _register(ctx)
 

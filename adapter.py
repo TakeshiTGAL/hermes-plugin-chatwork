@@ -51,12 +51,12 @@ except ImportError:  # pragma: no cover - exercised only on old Hermes builds
             return extra[key]
         return default
 
-try:
+if __package__:
     from .client import ChatworkAccessError, ChatworkAuthError, ChatworkClient, ChatworkError, \
         ChatworkRateLimited, ChatworkTransientError, TOKEN_PAGE
     from .markup import parse_inbound, quote_preview, render_outbound, reply_header
     from .state import CursorState
-except ImportError:  # flat import (pytest rootdir, validator probe)
+else:  # flat import only when loaded as a top-level module (pytest rootdir, validator probe)
     from client import ChatworkAccessError, ChatworkAuthError, ChatworkClient, ChatworkError, \
         ChatworkRateLimited, ChatworkTransientError, TOKEN_PAGE  # type: ignore
     from markup import parse_inbound, quote_preview, render_outbound, reply_header  # type: ignore
@@ -94,29 +94,40 @@ PLATFORM_HINT = (
 # Hermes, but Hermes' own commands and approval answers stay with the account
 # the token belongs to. Others keep only these harmless, self-scoped commands.
 OPEN_COMMANDS = frozenset({"help", "whoami", "new", "reset"})
-# Bare words Hermes 0.21.4 accepts as an answer while an approval is waiting;
-# newer builds add the active language's words (gateway.run_busy.approval_input_words).
+# Bare words Hermes accepts as an answer while an approval is waiting.
+# English lists match locales/en.yaml ``approval.inputs.*``; Japanese defaults from
+# locales/ja.yaml are included so fail-closed still refuses 「はい」 when
+# ``approval_input_words`` cannot load the active language pack.
 _APPROVAL_WORDS_0214 = frozenset({
+    # en: approve / deny / always / session (+ thumbs Hermes always matches)
     "approve", "yes", "ok", "okay", "confirm", "y", "👍",
     "deny", "no", "reject", "cancel", "n", "👎",
     "always", "approve always", "always approve",
     "session", "approve session", "session approve",
+    # ja defaults (approval.inputs.approve/deny/always/session)
+    "承認", "はい", "了解", "許可", "実行", "確認",
+    "拒否", "いいえ", "却下", "キャンセル", "だめ",
+    "常に", "常に承認", "いつも承認",
+    "セッション", "セッション承認", "セッション中は承認",
 })
 # Bare words that answer "always" to a pending /new or /reset confirmation,
 # which turns those confirmations off for the whole profile.
-_CONFIRM_ALWAYS_WORDS_0214 = frozenset({"always", "always approve", "remember"})
+_CONFIRM_ALWAYS_WORDS_0214 = frozenset({
+    "always", "always approve", "remember",
+    "常に", "常に承認", "記憶",
+})
 COMMAND_REFUSAL = (
+    "Only the account this bot's API token belongs to can use Hermes commands (/approve, /sethome, /pause, "
+    "/model, /memory and so on) or answer \"yes\" while an approval is waiting, because CHATWORK_ALLOWED_USERS "
+    "is not set. Everyone else can use /help, /whoami, /new and /reset. To let others in, whoever runs Hermes "
+    "adds CHATWORK_ALLOWED_USERS=<account id>,<account id> to ~/.hermes/.env and restarts; this also limits "
+    "who can talk to the bot. An approval nobody answers expires and the action does not run.\n\n"
     "Hermes のコマンド（/approve・/sethome・/pause・/model・/memory など）と、承認待ちの間の「はい」「yes」には、"
     "このボットの API トークンのアカウントしか答えられません。CHATWORK_ALLOWED_USERS が設定されていないためです。"
     "ほかの人が使えるコマンドは /help・/whoami・/new・/reset だけです。"
     "ほかの人にも任せるには、Hermes を動かしている人が ~/.hermes/.env に "
     "CHATWORK_ALLOWED_USERS=アカウントID,アカウントID を書いて再起動します（AI と話せる人もその人たちに絞られます）。"
-    "誰も答えなかった承認は時間切れになり、その操作は実行されません。\n\n"
-    "Only the account this bot's API token belongs to can use Hermes commands (/approve, /sethome, /pause, "
-    "/model, /memory and so on) or answer \"yes\" while an approval is waiting, because CHATWORK_ALLOWED_USERS "
-    "is not set. Everyone else can use /help, /whoami, /new and /reset. To let others in, whoever runs Hermes "
-    "adds CHATWORK_ALLOWED_USERS=<account id>,<account id> to ~/.hermes/.env and restarts; this also limits "
-    "who can talk to the bot. An approval nobody answers expires and the action does not run."
+    "誰も答えなかった承認は時間切れになり、その操作は実行されません。"
 )
 
 
@@ -171,13 +182,18 @@ def _allowed_users_set() -> bool:
 
 
 def _input_words(fixed: frozenset, keys: Tuple[str, ...]) -> frozenset:
-    """Hermes' typed-reply words for ``approval.inputs.<key>`` (English plus the active language)."""
+    """Hermes' typed-reply words for ``approval.inputs.<key>`` (fixed defaults ∪ active language).
+
+    ``fixed`` already carries English + Japanese defaults so reserved-word detection
+    stays closed if ``approval_input_words`` fails. Active-language extras are additive.
+    """
     words = set(fixed)
     try:
         from gateway.run_busy import approval_input_words
         for key in keys:
             words.update(approval_input_words(key))
-    except Exception:  # 0.21.4 has the fixed English lists only
+    except Exception:
+        # Fail closed: keep the fixed English+Japanese defaults; do not shrink the set.
         pass
     return frozenset(words)
 
@@ -473,8 +489,10 @@ class ChatworkAdapter(BasePlatformAdapter):
           as ordinary text: ``allow_gateway_control`` is turned off for it, so
           it reaches the model as words and runs nothing.
         - A bare approval word ("yes", "はい", "👍") while an approval is waiting
-          in the sender's session, or "always" while their /new or /reset
-          confirmation is waiting. That is when Hermes reads them as answers.
+          in the sender's session, while their session is mid-turn
+          (``_active_sessions``), or when session-key / approval / confirm helpers
+          cannot be evaluated (fail closed). Also "always" while their /new or
+          /reset confirmation is waiting — or fail closed if that helper fails.
         """
         try:  # "restart gateway" typed in a 1:1 chat becomes /restart inside Hermes; judge it the same way
             from gateway.platforms.base import coerce_plaintext_gateway_command
@@ -495,25 +513,38 @@ class ChatworkAdapter(BasePlatformAdapter):
         word = (event.text or "").strip().lower()
         if not word or len(word) > 40:
             return None
+        approval_words = _input_words(_APPROVAL_WORDS_0214, ("approve", "deny", "always", "session"))
+        confirm_words = _input_words(_CONFIRM_ALWAYS_WORDS_0214, ("confirm_always",))
+        confirm_reply = word.lstrip("!/")
+        looks_reserved = word in approval_words or confirm_reply in confirm_words
+        if not looks_reserved:
+            return None
+        # Fail closed: if session key / approval / confirm helpers cannot be evaluated,
+        # treat reserved words as reserved (same posture as resolve_command above).
         try:
             key = self._event_session_key(event)
         except Exception:
-            return None
+            return word
         try:
             from tools.approval import has_blocking_approval
             approval_waiting = bool(has_blocking_approval(key))
-        except Exception:  # no approval system, nothing can be waiting
-            approval_waiting = False
-        if approval_waiting and word in _input_words(_APPROVAL_WORDS_0214, ("approve", "deny", "always", "session")):
+        except Exception:
             return word
         try:
             from tools.slash_confirm import get_pending
             confirm_waiting = bool(get_pending(key))
         except Exception:
-            confirm_waiting = False
+            return word
+        # Also refuse approval words while this guest's session is mid-turn (race before
+        # has_blocking_approval becomes true). If the attribute is missing (Hermes renamed
+        # it), assume busy — fail closed rather than skipping the race guard.
+        sessions = getattr(self, "_active_sessions", None)
+        session_busy = True if sessions is None else key in sessions
+        if (approval_waiting or session_busy) and word in approval_words:
+            return word
         # Hermes reads a confirmation reply with "!" and "/" stripped ("!always" counts);
         # an approval reply it reads as typed (strip + lower), as compared above.
-        if confirm_waiting and word.lstrip("!/") in _input_words(_CONFIRM_ALWAYS_WORDS_0214, ("confirm_always",)):
+        if confirm_waiting and confirm_reply in confirm_words:
             return word
         return None
 

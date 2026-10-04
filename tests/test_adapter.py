@@ -797,3 +797,250 @@ def test_guest_cannot_answer_always_to_a_pending_reset_confirmation(tmp_path, mo
     mids, plain_yes = run(scenario())
     assert [e.message_id for e in a.received] == [plain_yes]
     assert [mid for _, body, _ in fake.posted for mid in mids if f"-{mid}]" in body] == mids
+
+
+def test_command_refusal_english_first():
+    assert cw.COMMAND_REFUSAL.lstrip().startswith("Only the account")
+    assert "CHATWORK_ALLOWED_USERS" in cw.COMMAND_REFUSAL
+    assert "このボットの API トークン" in cw.COMMAND_REFUSAL
+
+
+def test_package_import_does_not_fall_back_to_flat_on_sibling_error(monkeypatch):
+    """When __package__ is set, a sibling ImportError must not retry top-level client/state."""
+    import builtins
+    import importlib.util
+    import sys
+
+    real_import = builtins.__import__
+    probed = {"flat_client": 0}
+    root = Path(cw.__file__).resolve().parent
+
+    def gated_import(name, globals=None, locals=None, fromlist=(), level=0):
+        # Relative ``from .client import …`` (level>=1): fail as a broken sibling.
+        if level >= 1 and (name == "client" or (not name and fromlist and "client" in fromlist)):
+            raise ImportError("broken sibling client")
+        if name == "client" and level == 0:
+            probed["flat_client"] += 1
+            raise AssertionError("must not fall back to flat client import")
+        return real_import(name, globals, locals, fromlist, level)
+
+    spec = importlib.util.spec_from_file_location(
+        "jp_chatwork_pkg.adapter", root / "adapter.py",
+        submodule_search_locations=[str(root)],
+    )
+    # Parent package so relative imports see a real package name.
+    import types
+    pkg = types.ModuleType("jp_chatwork_pkg")
+    pkg.__path__ = [str(root)]
+    sys.modules["jp_chatwork_pkg"] = pkg
+    mod = importlib.util.module_from_spec(spec)
+    mod.__package__ = "jp_chatwork_pkg"
+    sys.modules["jp_chatwork_pkg.adapter"] = mod
+    monkeypatch.setattr(builtins, "__import__", gated_import)
+    try:
+        try:
+            spec.loader.exec_module(mod)
+            ok = True
+        except ImportError:
+            ok = False
+        assert ok is False
+        assert probed["flat_client"] == 0
+    finally:
+        sys.modules.pop("jp_chatwork_pkg", None)
+        sys.modules.pop("jp_chatwork_pkg.adapter", None)
+
+
+def test_guest_yes_refused_when_session_key_helper_fails(tmp_path, monkeypatch):
+    import tools.approval as approval
+    import tools.slash_confirm as slash_confirm
+
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+    calls = {"approval": 0, "confirm": 0}
+
+    def boom(event):
+        raise RuntimeError("session key unavailable")
+
+    def count_approval(key):
+        calls["approval"] += 1
+        return False
+
+    def count_confirm(key):
+        calls["confirm"] += 1
+        return None
+
+    monkeypatch.setattr(a, "_event_session_key", boom)
+    monkeypatch.setattr(approval, "has_blocking_approval", count_approval)
+    monkeypatch.setattr(slash_confirm, "get_pending", count_confirm)
+
+    async def scenario():
+        await start(a)
+        mid = _ask(fake, TEAM, "yes")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert calls == {"approval": 0, "confirm": 0}
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
+
+
+def test_guest_yes_refused_when_has_blocking_approval_unavailable(tmp_path, monkeypatch):
+    import tools.approval as approval
+    import tools.slash_confirm as slash_confirm
+
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+    calls = {"confirm": 0}
+
+    def boom(key):
+        raise ImportError("has_blocking_approval moved")
+
+    def count_confirm(key):
+        calls["confirm"] += 1
+        return None
+
+    monkeypatch.setattr(approval, "has_blocking_approval", boom)
+    monkeypatch.setattr(slash_confirm, "get_pending", count_confirm)
+
+    async def scenario():
+        await start(a)
+        mid = _ask(fake, TEAM, "yes")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert calls["confirm"] == 0
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
+
+
+def test_guest_yes_refused_when_approval_import_fails(tmp_path, monkeypatch):
+    """ImportError while loading tools.approval also fail-closes (not only call-time errors)."""
+    import sys
+    import tools.slash_confirm as slash_confirm
+
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+    calls = {"confirm": 0}
+
+    def count_confirm(key):
+        calls["confirm"] += 1
+        return None
+
+    # ``from tools.approval import …`` raises when the module entry is None.
+    monkeypatch.setitem(sys.modules, "tools.approval", None)
+    monkeypatch.setattr(slash_confirm, "get_pending", count_confirm)
+
+    async def scenario():
+        await start(a)
+        mid = _ask(fake, TEAM, "yes")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert calls["confirm"] == 0
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
+
+
+def test_guest_yes_refused_when_get_pending_unavailable(tmp_path, monkeypatch):
+    import tools.slash_confirm as slash_confirm
+
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+
+    def boom(key):
+        raise RuntimeError("get_pending broken")
+
+    monkeypatch.setattr(slash_confirm, "get_pending", boom)
+
+    async def scenario():
+        await start(a)
+        mid = _ask(fake, TEAM, "yes")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
+
+
+def test_guest_yes_refused_while_session_is_running(tmp_path, monkeypatch):
+    """Close the gap before has_blocking_approval flips true mid-turn."""
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+
+    async def scenario():
+        await start(a)
+        # Same sender/room as the later "yes": key must come from _event_session_key.
+        probe = _ask(fake, TEAM, "見積の書き方を教えて")
+        await a._poll_once()
+        assert len(a.received) == 1 and a.received[0].message_id == probe
+        key = a._event_session_key(a.received[0])
+        a._active_sessions[key] = asyncio.Event()
+        a.received.clear()
+        mid = _ask(fake, TEAM, "yes")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
+
+
+def test_guest_hai_refused_when_approval_input_words_fails_under_ja(tmp_path, monkeypatch):
+    """Fixed JA defaults keep 「はい」 reserved when approval_input_words cannot load."""
+    from gateway.session import SessionSource, build_session_key
+    import tools.approval as approval
+
+    monkeypatch.setenv("HERMES_LANGUAGE", "ja")
+    try:
+        from agent.i18n import reset_language_cache
+        reset_language_cache()
+    except Exception:
+        pass
+
+    def boom(key):
+        raise RuntimeError("approval_input_words unavailable")
+
+    # 0.21.4 has no approval_input_words; raising=False still installs the stub so
+    # _input_words hits the exception path and must rely on the fixed JA list.
+    monkeypatch.setattr("gateway.run_busy.approval_input_words", boom, raising=False)
+
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+    key = build_session_key(SessionSource(
+        platform=a.platform, chat_id=TEAM, chat_type="group",
+        user_id=str(HUMAN), user_name="山田",
+    ))
+
+    async def scenario():
+        await start(a)
+        monkeypatch.setitem(approval._gateway_queues, key, [object()])
+        assert approval.has_blocking_approval(key)
+        mid = _ask(fake, TEAM, "はい")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
+
+
+def test_guest_yes_refused_when_active_sessions_attribute_missing(tmp_path, monkeypatch):
+    """Missing _active_sessions must fail closed (treat as busy), not skip the race guard."""
+    fake = FakeChatwork()
+    a = make_adapter(fake, tmp_path)
+
+    async def scenario():
+        await start(a)
+        del a._active_sessions
+        assert not hasattr(a, "_active_sessions")
+        mid = _ask(fake, TEAM, "yes")
+        await a._poll_once()
+        return mid
+
+    mid = run(scenario())
+    assert a.received == []
+    assert any(f"-{mid}]" in body and "Only the account" in body for _, body, _ in fake.posted)
